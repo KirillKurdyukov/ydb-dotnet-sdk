@@ -218,7 +218,7 @@ public sealed class YdbTransaction : DbTransaction
     /// </remarks>
     public override IsolationLevel IsolationLevel => _transactionMode switch
     {
-        TransactionMode.SerializableRw => IsolationLevel.Serializable,
+        TransactionMode.SerializableRw or TransactionMode.StrictSerializableRw => IsolationLevel.Serializable,
         TransactionMode.SnapshotRw => IsolationLevel.Snapshot,
         _ => IsolationLevel.Unspecified
     };

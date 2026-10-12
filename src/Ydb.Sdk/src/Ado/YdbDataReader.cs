@@ -34,6 +34,14 @@ public sealed class YdbDataReader : DbDataReader, IAsyncEnumerable<YdbDataRecord
     private int _currentRowIndex = -1;
     private long _resultSetIndex = -1;
     private ResultSet? _currentResultSet;
+    private ExecuteQueryResponsePart? _lastPart;
+    private VirtualTimestamp? _snapshotTimestamp;
+
+    /// <summary>
+    /// Gets the complete query metadata after the stream has been successfully consumed, or null while
+    /// it is incomplete. For multiple result sets, consume NextResultAsync until it returns false.
+    /// </summary>
+    public YdbQueryInfo? QueryInfo { get; private set; }
 
     private interface IMetadata
     {
@@ -46,7 +54,7 @@ public sealed class YdbDataReader : DbDataReader, IAsyncEnumerable<YdbDataRecord
         Column GetColumn(int ordinal);
     }
 
-    private IMetadata ReaderMetadata { get; set; } = null!;
+    private IMetadata ReaderMetadata { get; set; } = EmptyMetadata.Instance;
 
     private ResultSet CurrentResultSet => this switch
     {
@@ -109,9 +117,15 @@ public sealed class YdbDataReader : DbDataReader, IAsyncEnumerable<YdbDataRecord
 
     private async Task Init(CancellationToken cancellationToken)
     {
-        if (State.IsConsumed == await NextExecPart(cancellationToken).ConfigureAwait(false))
+        ReaderState = await NextExecPart(cancellationToken).ConfigureAwait(false);
+        if (ReaderState == State.IsConsumed)
         {
-            throw new YdbException("YDB server closed the stream");
+            if (_lastPart is null)
+            {
+                throw new YdbException("YDB server closed the stream");
+            }
+
+            return;
         }
 
         ReaderState = State.ReadResultSet;
@@ -908,46 +922,55 @@ public sealed class YdbDataReader : DbDataReader, IAsyncEnumerable<YdbDataRecord
         {
             _currentRowIndex = -1;
 
-            if (!await _stream.MoveNextAsync(cancellationToken).ConfigureAwait(false))
+            while (await _stream.MoveNextAsync(cancellationToken).ConfigureAwait(false))
             {
-                if (_ydbTransaction?.AutoCommit == true)
+                var part = _stream.Current;
+
+                _issueMessagesInStream.AddRange(part.Issues);
+
+                if (part.Status.IsNotSuccess())
                 {
-                    _ydbTransaction.Completed = true;
+                    while (await _stream.MoveNextAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        _issueMessagesInStream.AddRange(_stream.Current.Issues);
+                    }
+
+                    throw YdbException.FromServer(part.Status, _issueMessagesInStream);
                 }
 
-                return State.IsConsumed;
-            }
+                _lastPart = part;
+                _snapshotTimestamp = part.SnapshotTimestamp ?? _snapshotTimestamp;
 
-            var part = _stream.Current;
-
-            _issueMessagesInStream.AddRange(part.Issues);
-
-            if (part.Status.IsNotSuccess())
-            {
-                while (await _stream.MoveNextAsync(cancellationToken).ConfigureAwait(false))
+                if (_ydbTransaction != null && part.TxMeta != null)
                 {
-                    _issueMessagesInStream.AddRange(_stream.Current.Issues);
+                    _ydbTransaction.TxId ??= part.TxMeta.Id;
                 }
 
-                throw YdbException.FromServer(part.Status, _issueMessagesInStream);
+                if (part.ResultSet is null)
+                {
+                    continue;
+                }
+
+                _currentResultSet = part.ResultSet;
+                ReaderMetadata = new Metadata(_currentResultSet);
+
+                if (part.ResultSetIndex <= _resultSetIndex)
+                {
+                    return State.ReadResultSet;
+                }
+
+                _resultSetIndex = part.ResultSetIndex;
+
+                return State.NewResultSet;
             }
 
-            _currentResultSet = part.ResultSet;
-            ReaderMetadata = _currentResultSet != null ? new Metadata(_currentResultSet) : EmptyMetadata.Instance;
-
-            if (_ydbTransaction != null && part.TxMeta != null)
+            if (_ydbTransaction?.AutoCommit == true)
             {
-                _ydbTransaction.TxId ??= part.TxMeta.Id;
+                _ydbTransaction.Completed = true;
             }
 
-            if (part.ResultSetIndex <= _resultSetIndex)
-            {
-                return State.ReadResultSet;
-            }
-
-            _resultSetIndex = part.ResultSetIndex;
-
-            return State.NewResultSet;
+            QueryInfo = new YdbQueryInfo(_lastPart?.ExecStats, _lastPart?.CommitTimestamp, _snapshotTimestamp);
+            return State.IsConsumed;
         }
         catch (YdbException e)
         {

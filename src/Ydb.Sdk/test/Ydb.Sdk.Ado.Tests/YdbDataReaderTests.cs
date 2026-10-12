@@ -3,11 +3,35 @@ using Xunit;
 using Ydb.Issue;
 using Ydb.Query;
 using Ydb.Sdk.Ado.Tests.Utils;
+using Ydb.TableStats;
 
 namespace Ydb.Sdk.Ado.Tests;
 
 public class YdbDataReaderTests : TestBase
 {
+    [Fact]
+    public async Task NextResult_WhenTrailingPartHasOnlyStatistics_DoesNotCreateResultSet()
+    {
+        await using var connection = await CreateOpenConnectionAsync();
+        var result = ResultSet.Parser.ParseJson(
+            """{"columns":[{"name":"value","type":{"typeId":"BOOL"}}],"rows":[{"items":[{"boolValue":true}]}]}""");
+        await using var reader = await CreateYdbDataReader(new MockAsyncEnumerator<ExecuteQueryResponsePart>(
+        [
+            new ExecuteQueryResponsePart
+            {
+                Status = StatusIds.Types.StatusCode.Success, ResultSetIndex = 0, ResultSet = result
+            },
+            new ExecuteQueryResponsePart
+            {
+                Status = StatusIds.Types.StatusCode.Success, ResultSetIndex = 1, ExecStats = new QueryStats()
+            }
+        ]), connection);
+
+        Assert.True(await reader.ReadAsync());
+        Assert.True(reader.GetBoolean(0));
+        Assert.False(await reader.NextResultAsync());
+    }
+
     [Fact]
     public async Task BasedIteration_WhenNotCallMethodRead_ThrowException()
     {

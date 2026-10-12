@@ -2,6 +2,7 @@ using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
+using Ydb.Query;
 using Ydb.Sdk.Ado.Internal;
 using Ydb.Sdk.Ado.Session;
 using Ydb.Sdk.Tracing;
@@ -185,6 +186,11 @@ public sealed class YdbCommand : DbCommand
 
     public new YdbTransaction? Transaction { get; set; }
 
+    /// <summary>
+    /// Gets or sets the level of server statistics collected for this command. The default is None.
+    /// </summary>
+    public StatsMode StatsMode { get; set; } = StatsMode.None;
+
     public override bool DesignTimeVisible { get; set; }
 
     protected override YdbParameter CreateDbParameter() => new();
@@ -253,7 +259,8 @@ public sealed class YdbCommand : DbCommand
         }
 
         var ydbDataReader = await YdbDataReader.CreateYdbDataReader(await YdbConnection.Session
-                .ExecuteQuery(preparedSql.ToString(), ydbParameters, execSettings, transaction?.TransactionControl)
+                .ExecuteQuery(preparedSql.ToString(), ydbParameters, execSettings, transaction?.TransactionControl,
+                    StatsMode)
                 .ConfigureAwait(false),
             YdbConnection, dbActivity, startTimestamp, cancellationToken).ConfigureAwait(false);
 

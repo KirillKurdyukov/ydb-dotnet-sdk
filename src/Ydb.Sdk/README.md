@@ -69,6 +69,38 @@ while (await reader.ReadAsync())
 }
 ```
 
+## Query information
+
+Request server statistics through `YdbCommand.StatsMode`. After consuming all result sets,
+`YdbDataReader.QueryInfo` contains the complete server statistics and any returned virtual
+snapshot and commit timestamps:
+
+```csharp
+await using var cmd = new YdbCommand("SELECT 1; SELECT 2;", connection)
+{
+    StatsMode = Ydb.Query.StatsMode.Full
+};
+await using var reader = await cmd.ExecuteReaderAsync();
+do
+{
+    while (await reader.ReadAsync())
+        Console.WriteLine(reader.GetInt32(0));
+} while (await reader.NextResultAsync());
+
+Ydb.TableStats.QueryStats? stats = reader.QueryInfo!.Stats;
+Ydb.VirtualTimestamp? snapshot = reader.QueryInfo.SnapshotTimestamp;
+Ydb.VirtualTimestamp? commit = reader.QueryInfo.CommitTimestamp;
+```
+
+`QueryInfo` is null until the stream ends successfully. Its statistics and timestamps are
+optional: statistics default to `None`, and the server may omit them. `StrictSerializableRw`
+write transactions committed through `connection.EnableAutoCommit()` can return a commit
+timestamp in the final response. Read-only transactions do not have a commit timestamp.
+Strict mode requires server support and `table_service_config.enable_strict_serializable_isolation`
+to be enabled.
+Virtual timestamps represent database time, not wall-clock time; compare values only from
+the same database. Early reader disposal retains its existing cancellation behavior.
+
 ## Transactions
 
 ```csharp

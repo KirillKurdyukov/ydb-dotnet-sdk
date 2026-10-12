@@ -25,7 +25,8 @@ internal class RetryableSession : ISession
         string query,
         Dictionary<string, TypedValue> parameters,
         GrpcRequestSettings settings,
-        TransactionControl? txControl
+        TransactionControl? txControl,
+        StatsMode statsMode = StatsMode.None
     )
     {
         if (txControl is not null && !txControl.CommitTx)
@@ -34,7 +35,8 @@ internal class RetryableSession : ISession
         }
 
         return new ValueTask<IServerStream<ExecuteQueryResponsePart>>(
-            new InMemoryServerStream(_sessionSource, _retryPolicyExecutor, query, parameters, settings));
+            new InMemoryServerStream(_sessionSource, _retryPolicyExecutor, query, parameters, settings, txControl,
+                statsMode));
     }
 
     public Task CommitTransaction(
@@ -65,7 +67,9 @@ internal sealed class InMemoryServerStream(
     YdbRetryPolicyExecutor retryPolicyExecutor,
     string query,
     Dictionary<string, TypedValue> parameters,
-    GrpcRequestSettings settings
+    GrpcRequestSettings settings,
+    TransactionControl? txControl,
+    StatsMode statsMode
 ) : IServerStream<ExecuteQueryResponsePart>
 {
     private List<ExecuteQueryResponsePart>? _responses;
@@ -86,7 +90,8 @@ internal sealed class InMemoryServerStream(
             try
             {
                 var responses = new List<ExecuteQueryResponsePart>();
-                var serverStream = await session.ExecuteQuery(query, parameters, settings, null).ConfigureAwait(false);
+                var serverStream = await session.ExecuteQuery(query, parameters, settings, txControl, statsMode)
+                    .ConfigureAwait(false);
 
                 while (await serverStream.MoveNextAsync(ct).ConfigureAwait(false))
                 {

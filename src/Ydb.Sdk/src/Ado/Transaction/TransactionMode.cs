@@ -88,5 +88,10 @@ public enum TransactionMode
     /// but the lowest consistency guarantees.
     /// Only read operations are allowed.
     /// </remarks>
-    OnlineInconsistentRo
+    OnlineInconsistentRo,
+
+    /// <summary>
+    /// Strict serializable read-write mode. Successful transactions with write effects may return a commit timestamp.
+    /// </summary>
+    StrictSerializableRw
 }

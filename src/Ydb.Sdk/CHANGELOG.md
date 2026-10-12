@@ -1,3 +1,7 @@
+- Feat ADO.NET: expose complete query statistics and optional virtual timestamps through
+  `YdbDataReader.QueryInfo`, configure collection with `YdbCommand.StatsMode`, and support
+  `TransactionMode.StrictSerializableRw`. Metadata-only response parts no longer appear as result sets.
+
 ## v0.37.0
 
 - Fix ADO.NET: `GetSchema("Columns")` and `GetSchema("TablesWithStats")` no longer fail with `SchemeError` when a listed table is dropped concurrently; such a table is left out of the result ([#687](https://github.com/ydb-platform/ydb-dotnet-sdk/issues/687)).
